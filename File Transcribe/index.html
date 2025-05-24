@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Video Transcription & Hindi Translation</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background-color: #f0f0f0;
+    }
+    header {
+      background-color: #333;
+      color: white;
+      padding: 15px 20px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .controls-bar {
+        padding: 10px;
+        background-color: #e0e0e0;
+        text-align: center;
+        flex-shrink: 0;
+    }
+    .container {
+      display: flex;
+      flex-grow: 1;
+      overflow: hidden;
+      padding: 10px;
+      gap: 10px;
+    }
+    .video-container {
+      flex: 2; /* Takes more space */
+      display: flex;
+      background-color: #000;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    #inputVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    .text-outputs-container { /* New container for both text boxes */
+      flex: 1; /* Takes less space overall */
+      display: flex;
+      flex-direction: column; /* Stack transcription and translation vertically */
+      gap: 10px; /* Space between the two text boxes */
+    }
+    .text-box { /* Common styling for both transcription and translation boxes */
+      flex-grow: 1; /* Each box tries to grow equally within text-outputs-container */
+      height: 48%; /* Approximate, flex-grow will adjust */
+      display: flex;
+      flex-direction: column;
+      background-color: white;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 15px;
+      overflow-y: hidden; /* Parent scrolls, not this */
+    }
+    .text-box h2 {
+      margin-top: 0;
+      margin-bottom: 10px;
+      font-size: 1.1em; /* Slightly smaller heading */
+      color: #333;
+      flex-shrink: 0;
+    }
+    .log-area { /* The actual scrollable area within each text-box */
+      flex-grow: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column-reverse; /* For scrolling log behavior */
+      line-height: 1.5;
+    }
+    .log-area p {
+        margin: 0 0 7px 0;
+        word-wrap: break-word;
+    }
+    .log-area p.interim {
+        color: #777;
+    }
+    #status {
+        padding: 10px;
+        text-align: center;
+        background-color: #ddd;
+        font-style: italic;
+        flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Video Transcription & Hindi Translation</h1>
+  </header>
+  <div class="controls-bar">
+    <label for="videoFile">Select Video File: </label>
+    <input type="file" id="videoFile" accept="video/*">
+  </div>
+  <div id="status">Please select a video file.</div>
+  <div class="container">
+    <div class="video-container">
+      <video id="inputVideo" controls></video>
+    </div>
+    <div class="text-outputs-container"> {/* Container for both text boxes */}
+      <div class="text-box" id="transcriptionBox">
+        <h2>Transcription (Source Language)</h2>
+        <div class="log-area" id="transcriptionLog"></div>
+      </div>
+      <div class="text-box" id="translationBox">
+        <h2>Translation (Hindi)</h2>
+        <div class="log-area" id="translationLog"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('inputVideo');
+    const videoFileInput = document.getElementById('videoFile');
+    const transcriptionLog = document.getElementById('transcriptionLog'); // For English/source
+    const translationLog = document.getElementById('translationLog');   // For Hindi
+    const statusDiv = document.getElementById('status');
+
+    let mediaRecorder;
+    let ws;
+    let audioStreamSource;
+
+    function updateStatus(message, isError = false) {
+        statusDiv.textContent = message;
+        statusDiv.style.color = isError ? 'red' : 'black';
+    }
+
+    // Generic function to append to a log area
+    function appendToLog(logElement, text, isFinal) {
+        if (text === undefined || (text === null && !isFinal)) return;
+
+        // Special handling for "Translating..." to prevent spamming if it's the target
+        if (logElement === translationLog && text === "Translating..." && !isFinal) {
+            const lastEntry = logElement.firstChild;
+            if (lastEntry && lastEntry.classList.contains('interim') && lastEntry.textContent === "Translating...") {
+                return;
+            }
+        }
+
+        const lastEntry = logElement.firstChild;
+        if (!isFinal && lastEntry && lastEntry.classList.contains('interim')) {
+            lastEntry.textContent = text || "...";
+        } else {
+            const p = document.createElement('p');
+            p.textContent = text || (isFinal ? "" : "...");
+            if (!isFinal) {
+                p.classList.add('interim');
+            }
+            logElement.insertBefore(p, logElement.firstChild);
+        }
+    }
+
+    function setupWebSocket() {
+        ws = new WebSocket('ws://localhost:8080');
+
+        ws.onopen = () => {
+            updateStatus('WebSocket connected. Ready to process video audio.');
+            console.log('WebSocket connected');
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+
+                if (data.transcription !== undefined) {
+                    appendToLog(transcriptionLog, data.transcription, data.isFinal);
+                }
+                if (data.translation !== undefined) {
+                    appendToLog(translationLog, data.translation, data.isFinal);
+                }
+
+                if (data.error) {
+                    updateStatus(`Server error: ${data.error}`, true);
+                    appendToLog(transcriptionLog, `[ERROR: ${data.error}]`, true);
+                    appendToLog(translationLog, `[ERROR: ${data.error}]`, true);
+                }
+            } catch (e) {
+                console.error("Error parsing message or updating UI:", e);
+                updateStatus("Error processing message from server.", true);
+            }
+        };
+
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            updateStatus('WebSocket error. Check server and refresh.', true);
+        };
+
+        ws.onclose = () => {
+            console.log('WebSocket disconnected');
+            if (videoFileInput.files.length === 0) { // Only show error if not intentionally changing file
+                 updateStatus('WebSocket disconnected. Select a video or refresh.', true);
+            }
+            stopMediaRecorder();
+        };
+    }
+
+    function initializeMediaRecorder(stream) {
+        if (!stream || stream.getAudioTracks().length === 0) {
+            updateStatus("Video has no audio track or stream capture failed.", true);
+            return false;
+        }
+        const audioOnlyStream = new MediaStream(stream.getAudioTracks());
+        const options = { mimeType: 'audio/webm;codecs=opus' };
+        try {
+            mediaRecorder = new MediaRecorder(audioOnlyStream, options);
+        } catch (e) {
+            updateStatus(`Error creating MediaRecorder: ${e.name}. Try a different video.`, true);
+            return false;
+        }
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(event.data);
+            }
+        };
+        mediaRecorder.onstart = () => {
+            console.log('MediaRecorder started');
+            updateStatus('Processing video audio...');
+        };
+        mediaRecorder.onstop = () => {
+            console.log('MediaRecorder stopped');
+            if (videoElement.paused || videoElement.ended) {
+                 updateStatus('Video audio processing paused or finished.');
+            }
+        };
+        mediaRecorder.onerror = (event) => {
+            updateStatus(`MediaRecorder error: ${event.error.name}`, true);
+        };
+        return true;
+    }
+
+    function stopMediaRecorder() {
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+            mediaRecorder.stop();
+        }
+        mediaRecorder = null;
+    }
+
+    videoFileInput.addEventListener('change', function(event) {
+        const file = event.target.files[0];
+        if (file) {
+            stopMediaRecorder();
+            transcriptionLog.innerHTML = ''; // Clear previous transcription
+            translationLog.innerHTML = '';   // Clear previous translation
+            updateStatus('Loading video...');
+            const fileURL = URL.createObjectURL(file);
+            videoElement.src = fileURL;
+
+            videoElement.oncanplay = () => {
+                 updateStatus(`Video "${file.name}" loaded. Press play.`);
+                 if (videoElement.captureStream) {
+                    audioStreamSource = videoElement.captureStream();
+                    initializeMediaRecorder(audioStreamSource);
+                } else {
+                    updateStatus("captureStream API not supported.", true);
+                }
+            };
+            videoElement.onerror = (e) => {
+                updateStatus(`Error loading video: ${videoElement.error?.message || 'Unknown'}.`, true);
+            }
+        }
+    });
+
+    videoElement.addEventListener('play', () => {
+        if (ws && ws.readyState !== WebSocket.OPEN) {
+            setupWebSocket(); // Attempt to reconnect if closed
+            setTimeout(() => { // Give WS time to open
+                if (mediaRecorder && mediaRecorder.state === "inactive") mediaRecorder.start(300);
+                else if (!mediaRecorder && audioStreamSource) {
+                    if(initializeMediaRecorder(audioStreamSource)) mediaRecorder.start(300);
+                }
+            }, 500);
+        } else if (mediaRecorder && mediaRecorder.state === "inactive") {
+            mediaRecorder.start(300);
+        } else if (!mediaRecorder && audioStreamSource) { // If not initialized on canplay
+            if(initializeMediaRecorder(audioStreamSource)) mediaRecorder.start(300);
+        }
+    });
+
+    videoElement.addEventListener('pause', () => {
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+            mediaRecorder.requestData();
+            stopMediaRecorder();
+        }
+    });
+
+    videoElement.addEventListener('ended', () => {
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+            mediaRecorder.requestData();
+            stopMediaRecorder();
+        }
+        updateStatus('Video finished. Processing complete.');
+    });
+
+    setupWebSocket();
+
+    window.addEventListener('beforeunload', () => {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+        stopMediaRecorder();
+        if (videoElement.src) URL.revokeObjectURL(videoElement.src);
+    });
+  </script>
+</body>
+</html>

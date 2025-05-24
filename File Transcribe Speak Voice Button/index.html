@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Video Transcription, Translation & Voice-over</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; background-color: #f0f0f0; }
+    header { background-color: #333; color: white; padding: 15px 20px; text-align: center; flex-shrink: 0; }
+    .controls-bar { padding: 10px; background-color: #e0e0e0; text-align: center; flex-shrink: 0; }
+    .container { display: flex; flex-grow: 1; overflow: hidden; padding: 10px; gap: 10px; }
+    .video-container { flex: 2; display: flex; background-color: #000; border-radius: 8px; overflow: hidden; }
+    #inputVideo { width: 100%; height: 100%; object-fit: contain; }
+    .text-outputs-container { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+    .text-box { flex-grow: 1; height: 48%; display: flex; flex-direction: column; background-color: white; border: 1px solid #ccc; border-radius: 8px; padding: 15px; overflow-y: hidden; }
+    .text-box h2 { margin-top: 0; margin-bottom: 5px; font-size: 1.1em; color: #333; flex-shrink: 0; }
+    .text-box .controls { margin-bottom: 10px; }
+    .log-area { flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column-reverse; line-height: 1.5; }
+    .log-area p { margin: 0 0 7px 0; word-wrap: break-word; }
+    .log-area p.interim { color: #777; }
+    #status { padding: 10px; text-align: center; background-color: #ddd; font-style: italic; flex-shrink: 0; }
+    #toggleHindiVoiceButton { padding: 5px 10px; font-size: 0.9em; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Video Transcription, Hindi Translation & Voice-over</h1>
+  </header>
+  <div class="controls-bar">
+    <label for="videoFile">Select Video File (for live processing): </label>
+    <input type="file" id="videoFile" accept="video/*">
+  </div>
+  <div id="status">Please select a video file.</div>
+  <div class="container">
+    <div class="video-container">
+      <video id="inputVideo" controls></video>
+    </div>
+    <div class="text-outputs-container">
+      <div class="text-box" id="transcriptionBox">
+        <h2>Transcription (Source Language)</h2>
+        <div class="log-area" id="transcriptionLog"></div>
+      </div>
+      <div class="text-box" id="translationBox">
+        <h2>Translation (Hindi)</h2>
+        <div class="controls">
+            <button id="toggleHindiVoiceButton">Turn Hindi Voice OFF</button>
+        </div>
+        <div class="log-area" id="translationLog"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('inputVideo');
+    const videoFileInput = document.getElementById('videoFile');
+    const transcriptionLog = document.getElementById('transcriptionLog');
+    const translationLog = document.getElementById('translationLog');
+    const statusDiv = document.getElementById('status');
+    const toggleHindiVoiceButton = document.getElementById('toggleHindiVoiceButton');
+
+    let mediaRecorder;
+    let ws;
+    let audioStreamSource;
+
+    let audioContext;
+    let ttsAudioQueue = [];
+    let isPlayingTts = false;
+    let currentTtsSourceNode = null;
+    const MIN_TTS_CHUNK_DURATION = 0.05;
+    let isHindiVoiceOverEnabled = true;
+
+    function updateStatus(message, isError = false) {
+        statusDiv.textContent = message;
+        statusDiv.style.color = isError ? 'red' : 'black';
+        if(isError) console.error("[Client Status]", message); else console.log("[Client Status]", message);
+    }
+
+    function appendToLog(logElement, text, isFinal) {
+        if (text === undefined || (text === null && !isFinal)) return;
+        if (logElement === translationLog && text === "Translating..." && !isFinal) {
+            const lastEntry = logElement.firstChild;
+            if (lastEntry && lastEntry.classList.contains('interim') && lastEntry.textContent === "Translating...") return;
+        }
+        const lastEntry = logElement.firstChild;
+        if (!isFinal && lastEntry && lastEntry.classList.contains('interim')) {
+            lastEntry.textContent = text || "...";
+        } else {
+            const p = document.createElement('p');
+            p.textContent = text || (isFinal ? "" : "...");
+            if (!isFinal) p.classList.add('interim');
+            logElement.insertBefore(p, logElement.firstChild);
+        }
+    }
+
+    function initializeAudioContext() {
+        if (!audioContext && (window.AudioContext || window.webkitAudioContext)) {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioContext.state === 'suspended') {
+                    audioContext.resume().then(() => console.log("[Client] AudioContext resumed for TTS."));
+                } else {
+                    console.log("[Client] AudioContext initialized for TTS.");
+                }
+            } catch (e) {
+                console.error("[Client] Web Audio API not supported.", e);
+                updateStatus("TTS voice-over not supported by browser.", true);
+                toggleHindiVoiceButton.disabled = true;
+                isHindiVoiceOverEnabled = false;
+            }
+        } else if (audioContext && audioContext.state === 'suspended') {
+             audioContext.resume().then(() => console.log("[Client] AudioContext resumed."));
+        }
+    }
+
+    function playNextTtsAudio() {
+        if (!audioContext || !isHindiVoiceOverEnabled || isPlayingTts || ttsAudioQueue.length === 0 || videoElement.paused) {
+            return;
+        }
+        if (audioContext.state === 'suspended') {
+            audioContext.resume().then(playNextTtsAudio);
+            return;
+        }
+        isPlayingTts = true;
+        const bufferToPlay = ttsAudioQueue.shift();
+        currentTtsSourceNode = audioContext.createBufferSource();
+        currentTtsSourceNode.buffer = bufferToPlay;
+        currentTtsSourceNode.connect(audioContext.destination);
+        // console.log(`[Client] Playing TTS audio (duration: ${bufferToPlay.duration.toFixed(2)}s). Queue: ${ttsAudioQueue.length}`);
+        currentTtsSourceNode.start();
+        currentTtsSourceNode.onended = () => {
+            currentTtsSourceNode = null;
+            isPlayingTts = false;
+            if (isHindiVoiceOverEnabled && !videoElement.paused && ttsAudioQueue.length > 0) {
+                playNextTtsAudio();
+            }
+        };
+    }
+
+    function stopAndClearTts(clearQueue = true) {
+        if (currentTtsSourceNode) {
+            try { currentTtsSourceNode.stop(); } catch(e) {}
+            currentTtsSourceNode = null;
+        }
+        if (clearQueue) ttsAudioQueue = [];
+        isPlayingTts = false;
+    }
+
+    toggleHindiVoiceButton.addEventListener('click', () => {
+        isHindiVoiceOverEnabled = !isHindiVoiceOverEnabled;
+        if (isHindiVoiceOverEnabled) {
+            toggleHindiVoiceButton.textContent = 'Turn Hindi Voice OFF';
+            console.log("[Client] Hindi voice-over ENABLED");
+            if (!videoElement.paused && ttsAudioQueue.length > 0) playNextTtsAudio();
+        } else {
+            toggleHindiVoiceButton.textContent = 'Turn Hindi Voice ON';
+            console.log("[Client] Hindi voice-over DISABLED");
+            stopAndClearTts(true);
+        }
+    });
+
+    function setupWebSocket() {
+        console.log("[Client] Setting up WebSocket connection...");
+        ws = new WebSocket('ws://localhost:8080');
+        ws.onopen = () => {
+            updateStatus('WebSocket connected. Ready for live processing.');
+            console.log('[Client] WebSocket connected (onopen event).');
+            // If mediaRecorder was initialized before WS opened, and video is playing, start it.
+            if (mediaRecorder && mediaRecorder.state === "inactive" && !videoElement.paused) {
+                console.log("[Client] WS opened, mediaRecorder inactive, video playing. Starting MediaRecorder.");
+                mediaRecorder.start(100); // Your chosen timeslice
+            }
+        };
+        ws.onmessage = (event) => {
+            console.log('[Client] Received message from server (first 200 chars):', event.data.substring(0, 200) + (event.data.length > 200 ? '...' : ''));
+            try {
+                const data = JSON.parse(event.data);
+                if (data.transcription !== undefined) appendToLog(transcriptionLog, data.transcription, data.isFinal);
+                if (data.translation !== undefined) appendToLog(translationLog, data.translation, data.isFinal);
+
+                if (isHindiVoiceOverEnabled && data.synthesizedAudio && audioContext) {
+                    try {
+                        const binaryString = window.atob(data.synthesizedAudio);
+                        const len = binaryString.length;
+                        const bytes = new Uint8Array(len);
+                        for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+                        audioContext.decodeAudioData(bytes.buffer.slice(0),
+                            (decodedBuffer) => {
+                                if (decodedBuffer.duration >= MIN_TTS_CHUNK_DURATION) {
+                                    ttsAudioQueue.push(decodedBuffer);
+                                    if (!videoElement.paused) playNextTtsAudio();
+                                }
+                            },
+                            (err) => console.error("[Client] Error decoding TTS audio data:", err)
+                        );
+                    } catch (e) { console.error("[Client] Error processing base64 TTS audio:", e); }
+                }
+                if (data.error) {
+                    updateStatus(`Server error: ${data.error}`, true);
+                    appendToLog(transcriptionLog, `[ERR: ${data.error}]`, true);
+                    appendToLog(translationLog, `[ERR: ${data.error}]`, true);
+                }
+            } catch (e) { console.error("[Client] Error parsing server message JSON:", e, "Original data:", event.data); }
+        };
+        ws.onerror = (error) => { console.error('[Client] WebSocket error:', error); updateStatus('WebSocket error.', true); };
+        ws.onclose = (event) => {
+            console.log('[Client] WebSocket disconnected. Reason:', event.reason, 'Code:', event.code);
+            if (!videoFileInput.value) updateStatus('WebSocket disconnected. Select video or refresh.', true);
+            stopMediaRecorder();
+            stopAndClearTts(true);
+        };
+    }
+
+    function initializeMediaRecorder(stream) {
+        console.log("[Client] Initializing MediaRecorder.");
+        if (!stream || stream.getAudioTracks().length === 0) {
+            updateStatus("Video has no audio track for MediaRecorder.", true); return false;
+        }
+        const audioOnlyStream = new MediaStream(stream.getAudioTracks());
+        const options = { mimeType: 'audio/webm;codecs=opus' }; // Ensure server expects this
+        try { mediaRecorder = new MediaRecorder(audioOnlyStream, options); }
+        catch (e) { updateStatus(`MediaRecorder Init Error: ${e.name}.`, true); return false; }
+
+        mediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    // console.log(`[Client] Sending audio data chunk, size: ${e.data.size}`);
+                    ws.send(e.data);
+                } else { console.warn("[Client] WebSocket not open, cannot send audio data."); }
+            }
+        };
+        mediaRecorder.onstart = () => {
+            console.log('[Client] MediaRecorder started. State:', mediaRecorder.state);
+            updateStatus('Live processing video audio...');
+        };
+        mediaRecorder.onstop = () => {
+            console.log('[Client] MediaRecorder stopped. State:', mediaRecorder.state);
+            if (videoElement.paused || videoElement.ended) updateStatus('Video processing paused/finished.');
+        };
+        mediaRecorder.onerror = (e) => {
+            console.error('[Client] MediaRecorder error:', e.error.name, e.error.message);
+            updateStatus(`MediaRecorder error: ${e.error.name}`, true);
+        };
+        return true;
+    }
+
+    function stopMediaRecorder() {
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+            console.log("[Client] Stopping MediaRecorder. Current state:", mediaRecorder.state);
+            mediaRecorder.stop();
+        }
+        // mediaRecorder = null; // Don't nullify if you might reuse with same stream on play/pause
+    }
+
+    videoFileInput.addEventListener('change', function(event) {
+        const file = event.target.files[0];
+        if (file) {
+            console.log("[Client] Video file selected:", file.name);
+            stopMediaRecorder();
+            stopAndClearTts(true);
+            transcriptionLog.innerHTML = '';
+            translationLog.innerHTML = '';
+            updateStatus('Loading video...');
+            const fileURL = URL.createObjectURL(file);
+            videoElement.src = fileURL;
+            videoElement.onloadedmetadata = () => console.log("[Client] Video metadata loaded.");
+
+            videoElement.oncanplay = () => {
+                updateStatus(`Video "${file.name}" loaded. Press play to start live processing.`);
+                console.log("[Client] Video 'canplay' event.");
+                initializeAudioContext();
+                if (videoElement.captureStream) {
+                    console.log("[Client] captureStream is available.");
+                    audioStreamSource = videoElement.captureStream(); // Get stream here
+                    // Don't initialize MediaRecorder here if WS isn't open yet.
+                    // Defer to 'play' event or WS 'onopen'.
+                    if (!ws || ws.readyState !== WebSocket.OPEN) {
+                        console.log("[Client] WebSocket not open on 'canplay', will init MediaRecorder later.");
+                        // Initialize to have it ready, but don't start
+                        if (!mediaRecorder) initializeMediaRecorder(audioStreamSource);
+                    } else if (mediaRecorder && mediaRecorder.state === "inactive") {
+                         console.log("[Client] WS open, MR inactive on 'canplay'. Ready for play event.");
+                    } else if (!mediaRecorder) { // WS open but MR not yet init
+                        initializeMediaRecorder(audioStreamSource);
+                    }
+
+                } else { updateStatus("captureStream API not supported.", true); }
+            };
+            videoElement.onerror = () => updateStatus(`Error loading video.`, true);
+        }
+    });
+
+    videoElement.addEventListener('play', () => {
+        console.log('[Client] Video play event triggered.');
+        initializeAudioContext(); // Ensure AudioContext is active
+
+        if (!audioStreamSource && videoElement.captureStream) { // If stream wasn't captured during 'canplay'
+            console.log("[Client] Capturing stream on 'play' event.");
+            audioStreamSource = videoElement.captureStream();
+        }
+
+        if (!mediaRecorder && audioStreamSource) { // If MediaRecorder wasn't initialized at all
+            console.log("[Client] Initializing MediaRecorder on 'play' event.");
+            initializeMediaRecorder(audioStreamSource);
+        }
+
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            console.log('[Client] WebSocket is OPEN on play.');
+            if (mediaRecorder && mediaRecorder.state === "inactive") {
+                console.log('[Client] Starting MediaRecorder on play (WS was open).');
+                mediaRecorder.start(100); // Start with your chosen timeslice
+            } else if (mediaRecorder) {
+                 console.log('[Client] MediaRecorder already in state:', mediaRecorder.state, 'on play (WS was open).');
+            }
+        } else {
+            console.log('[Client] WebSocket not open on play, attempting/waiting for setupWebSocket.');
+            if (!ws || (ws.readyState !== WebSocket.OPEN && ws.readyState !== WebSocket.CONNECTING)) {
+                setupWebSocket(); // This will handle starting MR in its onopen if video is playing
+            }
+            // If ws is CONNECTING, onopen will handle starting MR.
+        }
+        if (isHindiVoiceOverEnabled && ttsAudioQueue.length > 0) playNextTtsAudio();
+    });
+
+    videoElement.addEventListener('pause', () => {
+        console.log("[Client] Video pause event.");
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+            // mediaRecorder.requestData(); // Good to ensure last bits are sent
+            stopMediaRecorder();
+        }
+        stopAndClearTts(false); // Stop current TTS, preserve queue
+    });
+
+    videoElement.addEventListener('ended', () => {
+        console.log("[Client] Video ended event.");
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+            // mediaRecorder.requestData();
+            stopMediaRecorder();
+        }
+        stopAndClearTts(true);
+        updateStatus('Video finished.');
+    });
+
+    setupWebSocket(); // Initial setup
+    window.addEventListener('beforeunload', () => {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+        stopMediaRecorder();
+        stopAndClearTts(true);
+        if (videoElement.srcObject) { // If using srcObject for live camera
+            videoElement.srcObject.getTracks().forEach(track => track.stop());
+        } else if (videoElement.src && videoElement.src.startsWith('blob:')) { // For file uploads
+            URL.revokeObjectURL(videoElement.src);
+        }
+    });
+  </script>
+</body>
+</html>

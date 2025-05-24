@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Live English to Hindi Translation</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background-color: #f0f0f0;
+    }
+    header {
+      background-color: #333;
+      color: white;
+      padding: 15px 20px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .container {
+      display: flex;
+      flex-grow: 1;
+      overflow: hidden;
+      padding: 10px;
+      gap: 10px;
+    }
+    .video-container {
+      flex: 2;
+      display: flex;
+      background-color: #000;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    #liveVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .translation-container { /* Renamed from transcription-container */
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background-color: white;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 15px;
+      overflow-y: hidden;
+    }
+    .translation-container h2 { /* Renamed */
+      margin-top: 0;
+      margin-bottom: 10px;
+      font-size: 1.2em;
+      color: #333;
+      flex-shrink: 0;
+    }
+    #translationLog { /* Renamed from transcriptionLog */
+      flex-grow: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column-reverse;
+      line-height: 1.6;
+      font-size: 1.1em; /* Hindi text might benefit from slightly larger size */
+    }
+    #translationLog p {
+        margin: 0 0 8px 0;
+        word-wrap: break-word;
+    }
+    #translationLog p.interim {
+        color: #777;
+    }
+    #status {
+        padding: 10px;
+        text-align: center;
+        background-color: #ddd;
+        font-style: italic;
+        flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Live English Speech to Hindi Translation</h1>
+  </header>
+  <div id="status">Connecting to server...</div>
+  <div class="container">
+    <div class="video-container">
+      <video id="liveVideo" autoplay muted playsinline></video>
+    </div>
+    <div class="translation-container">
+      <h2>Translation (Hindi)</h2>
+      <div id="translationLog"></div>
+    </div>
+  </div>
+
+  <script>
+    const liveVideo = document.getElementById('liveVideo');
+    const translationLog = document.getElementById('translationLog'); // Changed variable name
+    const statusDiv = document.getElementById('status');
+
+    let mediaRecorder;
+    let ws;
+
+    function updateStatus(message, isError = false) {
+        statusDiv.textContent = message;
+        statusDiv.style.color = isError ? 'red' : 'black';
+    }
+
+    function appendToTranslationLog(text, isFinal) { // Changed function name
+        if (text === undefined || (text === null && !isFinal)) return; // Handle undefined/null text
+        if (text === "Translating..." && !isFinal) { // Handle "Translating..." specifically
+            // If last entry is already "Translating...", don't add another one
+            const lastEntry = translationLog.firstChild;
+            if (lastEntry && lastEntry.classList.contains('interim') && lastEntry.textContent === "Translating...") {
+                return;
+            }
+        }
+
+
+        const lastEntry = translationLog.firstChild;
+        // If it's an interim "Translating..." or a new interim translation
+        if (!isFinal && lastEntry && lastEntry.classList.contains('interim')) {
+            lastEntry.textContent = text || "..."; // Update existing interim
+        } else {
+            const p = document.createElement('p');
+            p.textContent = text || (isFinal ? "" : "..."); // Show ... for empty interim if text is null
+            if (!isFinal) {
+                p.classList.add('interim');
+            }
+            translationLog.insertBefore(p, translationLog.firstChild);
+        }
+    }
+
+    function setupWebSocket() {
+        ws = new WebSocket('ws://localhost:8080');
+
+        ws.onopen = () => {
+            updateStatus('WebSocket connected. Requesting camera/microphone access...');
+            console.log('WebSocket connected');
+            startMediaCapture();
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                // console.log('Received from server:', data); // For debugging
+
+                // Display the translation.
+                // The server sends `translation: "Translating..."` for interim results
+                // before the actual translation is ready.
+                if (data.translation !== undefined) {
+                    appendToTranslationLog(data.translation, data.isFinal);
+                }
+
+                // Optionally, log the English transcription to the console for debugging
+                if (data.transcription) {
+                    // console.log("Original English:", data.transcription, "Final:", data.isFinal);
+                }
+
+                if (data.error) {
+                    updateStatus(`Server error: ${data.error}`, true);
+                    appendToTranslationLog(`[ERROR: ${data.error}]`, true);
+                }
+
+            } catch (e) {
+                console.error("Error parsing message or updating UI:", e);
+                updateStatus("Error processing message from server.", true);
+            }
+        };
+
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            updateStatus('WebSocket error. Check server and refresh.', true);
+        };
+
+        ws.onclose = () => {
+            console.log('WebSocket disconnected');
+            updateStatus('WebSocket disconnected. Refresh to reconnect.', true);
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+            }
+        };
+    }
+
+    function startMediaCapture() {
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true }) // Audio input is still English
+            .then((stream) => {
+                updateStatus('Media access granted. Streaming...');
+                liveVideo.srcObject = stream;
+                liveVideo.onloadedmetadata = () => {
+                    liveVideo.play().catch(e => console.error("Video play error:", e));
+                };
+
+                const audioStream = new MediaStream(stream.getAudioTracks());
+                mediaRecorder = new MediaRecorder(audioStream, {
+                    mimeType: 'audio/webm;codecs=opus',
+                });
+
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(event.data);
+                    }
+                };
+
+                mediaRecorder.onstart = () => console.log('MediaRecorder started');
+                mediaRecorder.onstop = () => console.log('MediaRecorder stopped');
+                mediaRecorder.onerror = (event) => {
+                    console.error('MediaRecorder error:', event.error);
+                    updateStatus(`MediaRecorder error: ${event.error.name}`, true);
+                };
+
+                mediaRecorder.start(300);
+            })
+            .catch((err) => {
+                console.error('Error accessing media devices:', err);
+                updateStatus(`Error accessing media: ${err.name}. Please grant permissions.`, true);
+                if (err.name === "NotAllowedError") {
+                    alert("Camera and microphone access was denied. Please allow access and refresh the page.");
+                } else if (err.name === "NotFoundError") {
+                    alert("No camera or microphone found. Please ensure they are connected and enabled.");
+                }
+            });
+    }
+
+    // Initialize
+    setupWebSocket();
+
+    window.addEventListener('beforeunload', () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.close();
+        }
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+            mediaRecorder.stop();
+        }
+        if (liveVideo.srcObject) {
+            liveVideo.srcObject.getTracks().forEach(track => track.stop());
+        }
+    });
+
+  </script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Live Transcription & Translation</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    h2 { margin-top: 20px; }
+    #transcription, #translation { font-size: 1.2em; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Live Transcription & Translation</h1>
+  <h2>Transcription (English):</h2>
+  <div id="transcription">...</div>
+  <h2>Translation (Hindi):</h2>
+  <div id="translation">...</div>
+
+  <script>
+    const transcriptionDiv = document.getElementById('transcription');
+    const translationDiv = document.getElementById('translation');
+
+    const ws = new WebSocket('ws://localhost:8080');
+    ws.onopen = () => {
+      console.log('WebSocket connected');
+
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then((stream) => {
+          const recorder = new MediaRecorder(stream, {
+            mimeType: 'audio/webm;codecs=opus' // Correct for WEBM_OPUS
+          });
+
+          recorder.ondataavailable = async (event) => {
+            if (event.data.size > 0) {
+              const buffer = await event.data.arrayBuffer();
+              ws.send(buffer);
+            }
+          };
+
+          recorder.start(250); // send chunks every 250ms
+          console.log('MediaRecorder started');
+        })
+        .catch(err => {
+            console.error('Error accessing microphone:', err);
+            transcriptionDiv.textContent = "Error accessing microphone. Please grant permission.";
+        });
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      transcriptionDiv.textContent = data.transcription || 'Listening...';
+      translationDiv.textContent = data.translation || 'Translating...';
+    };
+
+    ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        transcriptionDiv.textContent = "WebSocket connection error.";
+    };
+
+    ws.onclose = () => {
+        console.log('WebSocket disconnected');
+        transcriptionDiv.textContent = "Disconnected. Refresh to try again.";
+    };
+  </script>
+</body>
+</html>

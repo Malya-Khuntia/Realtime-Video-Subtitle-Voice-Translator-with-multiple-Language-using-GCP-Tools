@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Video Transcription, Translation & Voice-over</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <style>
+    :root {
+      --primary-color: #4a90e2; 
+      --secondary-color: #f5f7fa;
+      --text-color: #333;
+      --dark-bg: #2c3e50; 
+      --light-text: #ecf0f1;
+      --border-radius: 8px;
+      --box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh; /* Ensure body takes full viewport height */
+      background-color: var(--secondary-color);
+      color: var(--text-color);
+      line-height: 1.6;
+      overflow: hidden; /* Prevent body scrollbars */
+    }
+
+    header { /* ... remains same ... */
+      background-color: var(--dark-bg); color: var(--light-text); padding: 20px 30px; text-align: center; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    header h1 { margin: 0; font-size: 1.8em; font-weight: 600; }
+
+    .controls-bar { /* ... remains same ... */
+      padding: 15px 20px; background-color: #fff; text-align: center; flex-shrink: 0; display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap; border-bottom: 1px solid #ddd; box-shadow: var(--box-shadow); margin-bottom: 10px;
+    }
+    .controls-bar label { font-weight: 500; }
+    .controls-bar input[type="file"], .controls-bar select { padding: 8px 12px; border: 1px solid #ccc; border-radius: var(--border-radius); font-size: 0.95em; background-color: #fff; }
+    .controls-bar input[type="file"] { cursor: pointer; }
+    .controls-bar input[type="file"]::file-selector-button { background-color: var(--primary-color); color: white; border: none; padding: 8px 12px; border-radius: var(--border-radius); cursor: pointer; margin-right: 10px; transition: background-color 0.2s ease; }
+    .controls-bar input[type="file"]::file-selector-button:hover { background-color: #3a7ac2; }
+
+    #status { /* ... remains same ... */
+      padding: 10px 20px; text-align: center; background-color: #e9ecef; font-style: italic; flex-shrink: 0; border-bottom: 1px solid #ddd; font-weight: 500; 
+    }
+
+    .container {
+      display: flex;
+      flex-grow: 1; /* Takes remaining vertical space */
+      overflow: hidden; 
+      padding: 15px; 
+      gap: 15px;    
+    }
+
+    .video-container { /* ... remains same ... */
+      flex: 3; display: flex; flex-direction: column; background-color: #000; border-radius: var(--border-radius); overflow: hidden; box-shadow: var(--box-shadow); min-height: 0;
+    }
+    #inputVideo { width: 100%; height: 100%; object-fit: contain; border-radius: var(--border-radius); }
+
+    .text-outputs-container {
+      flex: 2; 
+      display: flex;
+      flex-direction: column; /* Stack text boxes vertically */
+      gap: 15px; 
+      min-height: 0; /* Important for flex children */
+      /* Remove fixed height if any, let it be determined by flex-grow of .container */
+    }
+
+    .text-box {
+      flex-grow: 1;  /* Allow text boxes to grow equally */
+      flex-basis: 0;   /* Distribute space based on flex-grow */
+      min-height: 150px; /* Set a minimum sensible height */
+      display: flex;
+      flex-direction: column;
+      background-color: #fff;
+      border: 1px solid #ddd;
+      border-radius: var(--border-radius);
+      padding: 15px; 
+      overflow: hidden; /* text-box itself should not scroll */
+      box-shadow: var(--box-shadow);
+    }
+    .text-box h2 { margin-top: 0; margin-bottom: 8px; font-size: 1.15em; color: var(--primary-color); font-weight: 600; border-bottom: 2px solid var(--primary-color); padding-bottom: 6px; flex-shrink: 0;}
+    
+    .translation-header { /* ... remains same ... */
+        display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; margin-bottom: 8px;
+    }
+    .translation-header h2 { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+    .text-box .controls { margin-bottom: 0; flex-shrink: 0; }
+
+    .log-area { /* ... remains same ... */
+      flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column-reverse; line-height: 1.5; background-color: #fdfdfd; padding: 10px; border-radius: 4px; border: 1px solid #eee; min-height: 50px; 
+    }
+    .log-area p { margin: 0 0 8px 0; word-wrap: break-word; padding: 5px; border-radius: 4px; }
+    .log-area p.interim { color: #666; font-style: italic; }
+
+    .voice-toggle-button { /* ... remains same ... */
+        background-color: var(--primary-color); color: white; border: none; padding: 8px 12px; font-size: 0.85em; border-radius: var(--border-radius); cursor: pointer; transition: background-color 0.2s ease-in-out, transform 0.1s ease; display: flex; align-items: center; gap: 8px; 
+    }
+    .voice-toggle-button:hover { background-color: #3a7ac2; }
+    .voice-toggle-button:active { transform: scale(0.98); }
+    .voice-toggle-button.voice-off { background-color: #7f8c8d; }
+    .voice-toggle-button.voice-off:hover { background-color: #6c7a7b; }
+    .voice-toggle-button i { font-size: 1em; }
+
+    .log-area::-webkit-scrollbar { width: 8px; }
+    .log-area::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 10px; }
+    .log-area::-webkit-scrollbar-thumb { background: #ccc; border-radius: 10px; }
+    .log-area::-webkit-scrollbar-thumb:hover { background: #aaa; }
+
+    @media (max-width: 768px) { /* ... remains same ... */
+      body { height: auto; min-height: 100vh; overflow-y: auto; } 
+      .container { flex-direction: column; padding: 10px; overflow-y: visible; }
+      .controls-bar { gap: 10px; padding: 10px; }
+      .video-container { min-height: 30vh; max-height: 40vh; }
+      .text-outputs-container { width: 100%; }
+      .text-box { height: 200px; /* Adjusted fixed height for mobile, could also use min-height */ flex-grow: 0; /* Disable grow on mobile if using fixed height */ } 
+      header h1 { font-size: 1.5em; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Realtime Video Translation</h1>
+  </header>
+  <div class="controls-bar">
+    <label for="videoFile">Select Video:</label>
+    <input type="file" id="videoFile" accept="video/*,.mkv,.webm,.mp4,.mov,.avi,.ogg">
+    <label for="sourceLanguage">From:</label>
+    <select id="sourceLanguage"></select>
+    <label for="targetLanguage">To:</label>
+    <select id="targetLanguage"></select>
+  </div>
+  <div id="status">Please select languages and a video file.</div>
+  <div class="container">
+    <div class="video-container">
+      <video id="inputVideo" controls crossorigin="anonymous"></video>
+    </div>
+    <div class="text-outputs-container">
+      <div class="text-box" id="transcriptionBox">
+        <h2 id="transcriptionBoxTitle">Transcription</h2>
+        <div class="log-area" id="transcriptionLog"></div>
+      </div>
+      <div class="text-box" id="translationBox">
+        <div class="translation-header"> 
+            <h2 id="translationBoxTitle">Translation</h2>
+            <div class="controls">
+                <button id="toggleVoiceOverButton" class="voice-toggle-button">
+                    <i class="fas fa-microphone"></i>
+                    <span>Voice ON</span>
+                </button>
+            </div>
+        </div>
+        <div class="log-area" id="translationLog"></div> 
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- PASTE YOUR FULL WORKING JAVASCRIPT HERE ---
+    // (The same JavaScript from the previous version where transcription was appearing)
+    const videoElement = document.getElementById('inputVideo');
+    const videoFileInput = document.getElementById('videoFile');
+    const transcriptionLog = document.getElementById('transcriptionLog');
+    const translationLog = document.getElementById('translationLog');
+    const statusDiv = document.getElementById('status');
+    const toggleVoiceOverButton = document.getElementById('toggleVoiceOverButton');
+    const sourceLanguageSelect = document.getElementById('sourceLanguage');
+    const targetLanguageSelect = document.getElementById('targetLanguage');
+    const transcriptionBoxTitle = document.getElementById('transcriptionBoxTitle');
+    const translationBoxTitle = document.getElementById('translationBoxTitle');
+    let mediaRecorder, ws, audioStreamSource, audioOnlyStream, audioContext;
+    let ttsAudioQueue = [], isPlayingTts = false, currentTtsSourceNode = null;
+    const MIN_TTS_CHUNK_DURATION = 0.05, MEDIA_RECORDER_TIMESLICE = 250;
+    let isTargetVoiceOverEnabled = true;
+    const clientLanguageOptions = {'en-US':{name:'English (US)'},'en-CA':{name:'English (Canada)'},'en-GB':{name:'English (UK)'},'hi-IN':{name:'Hindi (India)'},'fr-CA':{name:'French (Canada)'},'fr-FR':{name:'French (France)'},'es-ES':{name:'Spanish (Spain)'},'es-MX':{name:'Spanish (Mexico)'},'de-DE':{name:'German (Germany)'},'ja-JP':{name:'Japanese (Japan)'},'ko-KR':{name:'Korean (South Korea)'},'cmn-CN':{name:'Chinese (Mandarin, CN)'},'ar-XA':{name:'Arabic (MSA)'}};
+    let clientState = {configAcknowledged:false,selectedSourceLang:'',selectedTargetLang:'',isMediaRecorderStarting:false};
+
+    function updateStatus(message, isError=false){statusDiv.textContent=message;statusDiv.style.color=isError?'red':'#333'; if(isError){statusDiv.style.backgroundColor = '#ffebee'; console.error(`[Client Status] ${message}`);} else {statusDiv.style.backgroundColor = '#e9ecef'; console.log(`[Client Status] ${message}`);}}
+    
+    function appendToLog(logElement,text,isFinal){
+        if (text === undefined || (text === null && !isFinal)) return;
+        if (logElement === translationLog && text === "Translating..." && !isFinal) {
+            const lastEntry = logElement.firstChild;
+            if (lastEntry && lastEntry.classList.contains('interim') && lastEntry.textContent.startsWith("Translating...")) return;
+        }
+        const lastEntry = logElement.firstChild;
+        if (!isFinal && lastEntry && lastEntry.classList.contains('interim')) {
+            lastEntry.textContent = text || "...";
+        } else {
+            const p = document.createElement('p');
+            p.textContent = text || (isFinal ? "" : "..."); 
+            if (!isFinal) p.classList.add('interim');
+            logElement.insertBefore(p, logElement.firstChild);
+        }
+    }
+
+    function initializeAudioContext(){
+        if (audioContext && audioContext.state === "running") return; 
+        if (!audioContext && (window.AudioContext || window.webkitAudioContext)) {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                console.log("[Client] AC Init. State:", audioContext.state);
+                if (audioContext.state === 'suspended') {
+                    audioContext.resume().then(() => console.log("[Client] AC Resumed"));
+                }
+            } catch (e) {
+                console.error("AC Crit:",e);
+                updateStatus("TTS Voice-over not available in this browser.", true);
+                toggleVoiceOverButton.disabled = true; 
+                isTargetVoiceOverEnabled = false;
+                updateVoiceOverButtonUI(); 
+            }
+        } else if (audioContext && audioContext.state === 'suspended') {
+             audioContext.resume().then(() => console.log("[Client] AC Resumed"));
+        }
+    }
+
+    function playNextTtsAudio(){
+        if (!audioContext || audioContext.state !== 'running' || !isTargetVoiceOverEnabled || isPlayingTts || ttsAudioQueue.length === 0 || videoElement.paused) return;
+        isPlayingTts = true;
+        const b = ttsAudioQueue.shift();
+        currentTtsSourceNode = audioContext.createBufferSource();
+        currentTtsSourceNode.buffer = b;
+        currentTtsSourceNode.connect(audioContext.destination);
+        currentTtsSourceNode.start();
+        currentTtsSourceNode.onended = () => {
+            currentTtsSourceNode = null; isPlayingTts = false;
+            if (isTargetVoiceOverEnabled && !videoElement.paused && ttsAudioQueue.length > 0) playNextTtsAudio();
+        };
+    }
+
+    function stopAndClearTts(clearQueue=true){
+        if (currentTtsSourceNode) {
+            try { currentTtsSourceNode.stop(); } catch(e) {}
+            currentTtsSourceNode = null;
+        }
+        if (clearQueue) ttsAudioQueue = [];
+        isPlayingTts = false;
+    }
+
+    function populateLanguageDropdowns(){
+        for (const c in clientLanguageOptions) {
+            const oS = document.createElement('option'); oS.value = c; oS.textContent = clientLanguageOptions[c].name; sourceLanguageSelect.appendChild(oS);
+            const oT = document.createElement('option'); oT.value = c; oT.textContent = clientLanguageOptions[c].name; targetLanguageSelect.appendChild(oT);
+        }
+        sourceLanguageSelect.value = 'en-US'; targetLanguageSelect.value = 'hi-IN';
+        updateLanguageUIDetails();
+    }
+
+    function updateLanguageUIDetails() {
+        clientState.selectedSourceLang = sourceLanguageSelect.value;
+        clientState.selectedTargetLang = targetLanguageSelect.value;
+        const sourceLangName = clientLanguageOptions[clientState.selectedSourceLang]?.name || 'Source';
+        const targetLangName = clientLanguageOptions[clientState.selectedTargetLang]?.name || 'Target';
+        transcriptionBoxTitle.textContent = `Transcription (${sourceLangName})`;
+        translationBoxTitle.textContent = `Translation (${targetLangName})`;
+        updateVoiceOverButtonUI();
+    }
+
+    function updateVoiceOverButtonUI() {
+        const icon = toggleVoiceOverButton.querySelector('i');
+        const text = toggleVoiceOverButton.querySelector('span');
+        if (isTargetVoiceOverEnabled) {
+            toggleVoiceOverButton.classList.remove('voice-off');
+            icon.className = 'fas fa-microphone';
+            text.textContent = 'Voice ON';
+        } else {
+            toggleVoiceOverButton.classList.add('voice-off');
+            icon.className = 'fas fa-microphone-slash';
+            text.textContent = 'Voice OFF';
+        }
+    }
+
+    sourceLanguageSelect.addEventListener('change', updateLanguageUIDetails);
+    targetLanguageSelect.addEventListener('change', updateLanguageUIDetails);
+
+    toggleVoiceOverButton.addEventListener('click', () => {
+        isTargetVoiceOverEnabled = !isTargetVoiceOverEnabled;
+        console.log(`Voice-over ${isTargetVoiceOverEnabled ? 'ENABLED' : 'DISABLED'}`);
+        if (isTargetVoiceOverEnabled) {
+            if (!videoElement.paused && ttsAudioQueue.length > 0) playNextTtsAudio();
+        } else {
+            stopAndClearTts(true);
+        }
+        updateVoiceOverButtonUI();
+    });
+    
+    function setupWebSocket() { 
+        console.log("[Client] Setting up WebSocket connection...");let wsP="ws://";if(window.location.protocol==="https:"){wsP="wss://";console.log("[Client] Page HTTPS, using WSS.")}const wsUrl=`${wsP}${window.location.host}`;console.log(`[Client] Attempting WS connect: ${wsUrl}`);ws=new WebSocket(wsUrl);clientState.configAcknowledged=false;
+        ws.onopen=()=>{updateStatus('WS connected. Sending lang config...');const sL=clientState.selectedSourceLang,tL=clientState.selectedTargetLang;if(!sL||!tL){updateStatus("CRITICAL: Langs missing.",true);ws.close(1008,"Lang config missing");return}console.log(`[Client] WS open. Sending config: Src=${sL}, Tgt=${tL}`);ws.send(JSON.stringify({type:'config',sourceLang:sL,targetLang:tL}))};
+        ws.onmessage=(event)=>{
+            console.log(`[Client INFO] <<---- RAW MESSAGE FROM SERVER: ${event.data}`); 
+            let data;
+            try { data = JSON.parse(event.data); console.log("[Client INFO] Parsed server message:", data);
+            } catch (e) { console.error("[Client CRITICAL] Failed to parse JSON from server message. Error:", e, "Original data:", event.data); return;  }
+            if (data && data.type === 'config_ack') { 
+                console.log("[Client SUCCESS] ---->>>> Received and Parsed 'config_ack':", JSON.stringify(data)); 
+                clientState.configAcknowledged = true; updateStatus(`Configured: ${data.source} -> ${data.target}. Ready.`); console.log(`[Client INFO] Config ACK from server: ${data.source} -> ${data.target}`);
+                const canStartMR = !videoElement.paused && mediaRecorder && mediaRecorder.state === "inactive" && !clientState.isMediaRecorderStarting;
+                console.log(`[Client DEBUG ConfigAck Conditions Check]\n    Video Paused: ${videoElement.paused} (Needed: false)\n    MediaRecorder Exists: ${!!mediaRecorder} (Needed: true)\n    MediaRecorder State: ${mediaRecorder?.state} (Needed: "inactive")\n    isMediaRecorderStarting Flag: ${clientState.isMediaRecorderStarting} (Needed: false)\n    All Conditions Met for MR Start: ${canStartMR}`);
+                if (canStartMR) { console.log("[Client ACTION] ---->>>> Conditions MET in ConfigAck. Attempting to start MediaRecorder via delay."); startMediaRecorderWithDelay();
+                } else { console.warn("[Client WARN] ---->>>> Conditions NOT MET in ConfigAck for starting MediaRecorder immediately."); }
+                return; 
+            }
+            console.log("[Client INFO] Message was not config_ack, processing as potential transcription/translation data.");
+            if(data.transcription!==undefined||data.isFinal)appendToLog(transcriptionLog,data.transcription,data.isFinal);
+            if(data.translation!==undefined||data.isFinal)appendToLog(translationLog,data.translation,data.isFinal);
+            if(isTargetVoiceOverEnabled&&data.synthesizedAudio&&audioContext){try{const bin=window.atob(data.synthesizedAudio),len=bin.length,bytes=new Uint8Array(len);for(let i=0;i<len;i++)bytes[i]=bin.charCodeAt(i);audioContext.decodeAudioData(bytes.buffer.slice(0),(decoded)=>{if(decoded.duration>=MIN_TTS_CHUNK_DURATION){ttsAudioQueue.push(decoded);if(!videoElement.paused)playNextTtsAudio()}},(err)=>console.error("TTS decode err:",err))}catch(e){console.error("TTS base64 err:",e)}}
+            if(data.error){updateStatus(`Server error: ${data.error}`,true);appendToLog(transcriptionLog,`[S_ERR:${data.error}]`,true);appendToLog(translationLog,`[S_ERR:${data.error}]`,true)}
+        };
+        ws.onerror=(errEvt)=>{console.error('WS error:',errEvt);updateStatus('WS error. Conn failed/interrupted.',true);clientState.configAcknowledged=false};
+        ws.onclose=(evt)=>{console.log(`WS disconnected. Code:${evt.code},Reason:"${evt.reason}",Clean:${evt.wasClean}`);updateStatus(`WS disconnected(${evt.code})`,!evt.wasClean);stopMediaRecorder();stopAndClearTts(true);clientState.configAcknowledged=false;clientState.isMediaRecorderStarting=false}}
+    
+    function startMediaRecorderWithDelay(){ 
+        if(!mediaRecorder||mediaRecorder.state!=="inactive"||clientState.isMediaRecorderStarting){console.log(`[Client DEBUG] MR start delayed aborted. MRState:${mediaRecorder?.state},StartingFlag:${clientState.isMediaRecorderStarting}`);return}console.log("[Client DEBUG] Queueing MR start (delayed).");clientState.isMediaRecorderStarting=true;updateStatus("Preparing audio recording...");
+        setTimeout(()=>{ console.log(`[Client DEBUG MR Delay Check] VidPaused:${videoElement.paused}, WSOpen:${ws?.readyState===WebSocket.OPEN}, CfgAck:${clientState.configAcknowledged}, MRState:${mediaRecorder?.state}`); if(mediaRecorder&&mediaRecorder.state==="inactive"&&!videoElement.paused&&ws&&ws.readyState===WebSocket.OPEN&&clientState.configAcknowledged){console.log(`[Client] Attempting MR start (delayed). Timeslice:${MEDIA_RECORDER_TIMESLICE}ms`);try{mediaRecorder.start(MEDIA_RECORDER_TIMESLICE);updateStatus("Recording audio...")}catch(e){console.error("MR start err:",e);updateStatus(`Audio rec start err:${e.name}`,true)}}else{console.warn(`[Client DEBUG] MR start conditions NOT MET after delay.`);updateStatus("Could not start audio rec.")}clientState.isMediaRecorderStarting=false},200)}
+    
+    function initializeMediaRecorder(stream){ 
+        console.log("[Client] Init MediaRecorder.");if(!stream||stream.getAudioTracks().length===0){updateStatus("No audio track in video.",true);return false}audioOnlyStream=new MediaStream(stream.getAudioTracks());const mimeTypes=['audio/webm;codecs=opus','audio/ogg;codecs=opus'];let chosenMime='';for(const type of mimeTypes){if(MediaRecorder.isTypeSupported(type)){chosenMime=type;break}}
+        if(!chosenMime){updateStatus("No Opus MIME supported.",true);console.error("Crit: No Opus MIME");return false}const opts={mimeType:chosenMime};console.log("[Client] Attempting MR with opts:",opts);try{mediaRecorder=new MediaRecorder(audioOnlyStream,opts);console.log(`[Client] MR initialized. ActualMIME:${mediaRecorder.mimeType}.State:${mediaRecorder.state}`)}catch(e){updateStatus(`MR Init Err:${e.name}.`,true);console.error("Crit: MR Init Fail",e);return false}
+        mediaRecorder.ondataavailable=(e)=>{if(e.data.size>100){if(ws&&ws.readyState===WebSocket.OPEN&&clientState.configAcknowledged)ws.send(e.data)}};
+        mediaRecorder.onstart=()=>{console.log('[Client] MR started. State:',mediaRecorder.state)};
+        mediaRecorder.onstop=()=>{console.log('[Client] MR stopped. State:',mediaRecorder.state);if(videoElement.paused||videoElement.ended)updateStatus('Audio rec stopped.');clientState.isMediaRecorderStarting=false};
+        mediaRecorder.onerror=(e)=>{const err=e.error||e;console.error('[Client CRITICAL] MR error:',err.name,err.message,e);updateStatus(`MR err:${err.name||'Unknown'}`,true);clientState.isMediaRecorderStarting=false};return true}
+    
+    function stopMediaRecorder(){
+        if(mediaRecorder&&mediaRecorder.state!=="inactive"){console.log("Stopping MR. State:",mediaRecorder.state);if(mediaRecorder.state==="recording")mediaRecorder.requestData();mediaRecorder.stop()}clientState.isMediaRecorderStarting=false}
+    
+    videoFileInput.addEventListener('change',function(evt){ 
+        const file=evt.target.files[0];if(file){console.log("Vid file selected:",file.name);if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING)){console.log("Closing existing WS for new file.");ws.close(1000,"New file");ws=null}clientState.configAcknowledged=false;clientState.isMediaRecorderStarting=false;stopMediaRecorder();mediaRecorder=null;audioStreamSource=null;audioOnlyStream=null;stopAndClearTts(true);transcriptionLog.innerHTML='';translationLog.innerHTML='';updateStatus('Loading video...');const fileURL=URL.createObjectURL(file);videoElement.src=fileURL;videoElement.onloadedmetadata=()=>console.log("Vid metadata loaded.");videoElement.oncanplay=()=>{updateStatus(`Vid "${file.name}" loaded. Play.`,false);console.log("Vid 'canplay' event.");initializeAudioContext()};videoElement.onerror=(e)=>{console.error("Vid load err:",videoElement.error,e);updateStatus(`Vid load err:${videoElement.error?.message||'Unknown'}.`,true)}}});
+    
+    videoElement.addEventListener('play',()=>{ 
+        console.log('[Client] Vid play evt.');initializeAudioContext();if(!clientState.selectedSourceLang||!clientState.selectedTargetLang){updateStatus("Select langs first.",true);videoElement.pause();return}console.log(`[Client DEBUG PlayEvt] Initial WSState:${ws?.readyState},CfgAck:${clientState.configAcknowledged}`);
+        if(!ws||ws.readyState===WebSocket.CLOSED||ws.readyState===WebSocket.CLOSING){console.log('[Client PlayEvt] WS not open, new conn.');setupWebSocket()}else if(ws.readyState===WebSocket.CONNECTING){console.log('[Client PlayEvt] WS connecting.')}else if(ws.readyState===WebSocket.OPEN&&!clientState.configAcknowledged){console.log('[Client PlayEvt] WS open, no ACK. Re-send cfg.');ws.send(JSON.stringify({type:'config',sourceLang:clientState.selectedSourceLang,targetLang:clientState.selectedTargetLang}))}
+        if(!audioStreamSource&&videoElement.captureStream){console.log("[Client PlayEvt] Capturing stream.");try{audioStreamSource=videoElement.captureStream()}catch(e){console.error("Crit PlayEvt captStream fail:",e);updateStatus("Audio capt fail.",true);videoElement.pause();return}}else if(!videoElement.captureStream){updateStatus("captureStream API not supported.",true);console.error("Crit PlayEvt no captStream API.");videoElement.pause();return}if(!audioStreamSource||audioStreamSource.getAudioTracks().length===0){updateStatus("No audio track.",true);console.error("Crit PlayEvt no audio tracks.");videoElement.pause();return}
+        if(!mediaRecorder){console.log("[Client PlayEvt] Init MR (was null).");if(!initializeMediaRecorder(audioStreamSource)){videoElement.pause();return}}else if(mediaRecorder.stream!==audioOnlyStream&&audioOnlyStream){console.log("[Client PlayEvt] MR stream outdated. Re-init.");stopMediaRecorder();if(!initializeMediaRecorder(audioStreamSource)){videoElement.pause();return}}
+        console.log(`[Client DEBUG PlayEvt] Post-init. MRState:${mediaRecorder?.state},CfgAck:${clientState.configAcknowledged},WSState:${ws?.readyState}`);
+        if(ws&&ws.readyState===WebSocket.OPEN&&clientState.configAcknowledged&&mediaRecorder&&mediaRecorder.state==="inactive"&&!clientState.isMediaRecorderStarting){console.log('[Client DEBUG PlayEvt] All conditions met in PlayEvt. Starting MR.');startMediaRecorderWithDelay()}else if(ws&&ws.readyState===WebSocket.OPEN&&clientState.configAcknowledged){if(!mediaRecorder||mediaRecorder.state!=="inactive")updateStatus("Waiting for audio rec rdy...")}else updateStatus("Waiting for server conn/cfg...");
+        if(isTargetVoiceOverEnabled&&ttsAudioQueue.length>0)playNextTtsAudio()});
+    
+    videoElement.addEventListener('pause',()=>{console.log("Vid pause evt.");stopMediaRecorder();stopAndClearTts(false)});
+    videoElement.addEventListener('ended',()=>{console.log("Vid ended evt.");stopMediaRecorder();stopAndClearTts(true);updateStatus('Video finished.')});
+    
+    populateLanguageDropdowns();
+    updateStatus('Please select languages and a video file.');
+    window.addEventListener('beforeunload',()=>{console.log("beforeunload: Cleaning up.");if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))ws.close(1001,"Nav away");stopMediaRecorder();stopAndClearTts(true);if(videoElement.srcObject)videoElement.srcObject.getTracks().forEach(t=>t.stop());else if(videoElement.src&&videoElement.src.startsWith('blob:'))URL.revokeObjectURL(videoElement.src)});
+    document.addEventListener('click',initializeAudioContext,{once:true});
+  </script>
+</body>
+</html>

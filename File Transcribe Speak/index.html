@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Video Transcription, Translation & Voice-over</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; background-color: #f0f0f0; }
+    header { background-color: #333; color: white; padding: 15px 20px; text-align: center; flex-shrink: 0; }
+    .controls-bar { padding: 10px; background-color: #e0e0e0; text-align: center; flex-shrink: 0; }
+    .container { display: flex; flex-grow: 1; overflow: hidden; padding: 10px; gap: 10px; }
+    .video-container { flex: 2; display: flex; background-color: #000; border-radius: 8px; overflow: hidden; }
+    #inputVideo { width: 100%; height: 100%; object-fit: contain; }
+    .text-outputs-container { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+    .text-box { flex-grow: 1; height: 48%; display: flex; flex-direction: column; background-color: white; border: 1px solid #ccc; border-radius: 8px; padding: 15px; overflow-y: hidden; }
+    .text-box h2 { margin-top: 0; margin-bottom: 10px; font-size: 1.1em; color: #333; flex-shrink: 0; }
+    .log-area { flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column-reverse; line-height: 1.5; }
+    .log-area p { margin: 0 0 7px 0; word-wrap: break-word; }
+    .log-area p.interim { color: #777; }
+    #status { padding: 10px; text-align: center; background-color: #ddd; font-style: italic; flex-shrink: 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Video Transcription, Hindi Translation & Voice-over</h1>
+  </header>
+  <div class="controls-bar">
+    <label for="videoFile">Select Video File: </label>
+    <input type="file" id="videoFile" accept="video/*">
+  </div>
+  <div id="status">Please select a video file.</div>
+  <div class="container">
+    <div class="video-container">
+      <video id="inputVideo" controls></video>
+    </div>
+    <div class="text-outputs-container">
+      <div class="text-box" id="transcriptionBox">
+        <h2>Transcription (Source Language)</h2>
+        <div class="log-area" id="transcriptionLog"></div>
+      </div>
+      <div class="text-box" id="translationBox">
+        <h2>Translation (Hindi)</h2>
+        <div class="log-area" id="translationLog"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('inputVideo');
+    const videoFileInput = document.getElementById('videoFile');
+    const transcriptionLog = document.getElementById('transcriptionLog');
+    const translationLog = document.getElementById('translationLog');
+    const statusDiv = document.getElementById('status');
+
+    let mediaRecorder;
+    let ws;
+    let audioStreamSource;
+
+    // For TTS Playback
+    let audioContext;
+    let ttsAudioQueue = []; // Queue for decoded AudioBuffer objects
+    let isPlayingTts = false;
+    let currentTtsSourceNode = null; // To control the currently playing TTS audio
+    const MIN_TTS_CHUNK_DURATION = 0.05; // seconds
+
+    function updateStatus(message, isError = false) {
+        statusDiv.textContent = message;
+        statusDiv.style.color = isError ? 'red' : 'black';
+    }
+
+    function appendToLog(logElement, text, isFinal) {
+        if (text === undefined || (text === null && !isFinal)) return;
+        if (logElement === translationLog && text === "Translating..." && !isFinal) {
+            const lastEntry = logElement.firstChild;
+            if (lastEntry && lastEntry.classList.contains('interim') && lastEntry.textContent === "Translating...") return;
+        }
+        const lastEntry = logElement.firstChild;
+        if (!isFinal && lastEntry && lastEntry.classList.contains('interim')) {
+            lastEntry.textContent = text || "...";
+        } else {
+            const p = document.createElement('p');
+            p.textContent = text || (isFinal ? "" : "...");
+            if (!isFinal) p.classList.add('interim');
+            logElement.insertBefore(p, logElement.firstChild);
+        }
+    }
+
+    function initializeAudioContext() {
+        if (!audioContext && (window.AudioContext || window.webkitAudioContext)) {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioContext.state === 'suspended') { // Browsers may start AudioContext in suspended state
+                    audioContext.resume().then(() => console.log("AudioContext resumed for TTS."));
+                } else {
+                    console.log("AudioContext initialized for TTS.");
+                }
+            } catch (e) {
+                console.error("Web Audio API not supported.", e);
+                updateStatus("TTS voice-over not supported by browser.", true);
+            }
+        } else if (audioContext && audioContext.state === 'suspended') {
+             audioContext.resume().then(() => console.log("AudioContext resumed."));
+        }
+    }
+
+    function playNextTtsAudio() {
+        if (!audioContext || isPlayingTts || ttsAudioQueue.length === 0 || videoElement.paused) {
+            return;
+        }
+        if (audioContext.state === 'suspended') { // Double check before playing
+            audioContext.resume().then(playNextTtsAudio);
+            return;
+        }
+
+        isPlayingTts = true;
+        const bufferToPlay = ttsAudioQueue.shift();
+        currentTtsSourceNode = audioContext.createBufferSource();
+        currentTtsSourceNode.buffer = bufferToPlay;
+        currentTtsSourceNode.connect(audioContext.destination);
+
+        console.log(`Playing TTS audio (duration: ${bufferToPlay.duration.toFixed(2)}s). Queue: ${ttsAudioQueue.length}`);
+        currentTtsSourceNode.start();
+
+        currentTtsSourceNode.onended = () => {
+            currentTtsSourceNode = null;
+            isPlayingTts = false;
+            if (!videoElement.paused && ttsAudioQueue.length > 0) { // If video still playing and more in queue
+                playNextTtsAudio();
+            } else if (ttsAudioQueue.length === 0) {
+                console.log("TTS queue empty.");
+            }
+        };
+    }
+
+    function stopAndClearTts() {
+        if (currentTtsSourceNode) {
+            try { currentTtsSourceNode.stop(); } catch(e) { /* might already be stopped */ }
+            currentTtsSourceNode = null;
+        }
+        ttsAudioQueue = [];
+        isPlayingTts = false;
+        console.log("TTS playback stopped and queue cleared.");
+    }
+
+
+    function setupWebSocket() {
+        ws = new WebSocket('ws://localhost:8080');
+        ws.onopen = () => {
+            updateStatus('WebSocket connected. Ready to process video.');
+            console.log('WebSocket connected');
+        };
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.transcription !== undefined) appendToLog(transcriptionLog, data.transcription, data.isFinal);
+                if (data.translation !== undefined) appendToLog(translationLog, data.translation, data.isFinal);
+
+                if (data.synthesizedAudio && audioContext) {
+                    try {
+                        const binaryString = window.atob(data.synthesizedAudio);
+                        const len = binaryString.length;
+                        const bytes = new Uint8Array(len);
+                        for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+
+                        audioContext.decodeAudioData(bytes.buffer.slice(0), // Use slice to ensure it's a copy for safety
+                            (decodedBuffer) => {
+                                if (decodedBuffer.duration >= MIN_TTS_CHUNK_DURATION) {
+                                    ttsAudioQueue.push(decodedBuffer);
+                                    if (!videoElement.paused) playNextTtsAudio();
+                                } else {
+                                    // console.log("Decoded TTS audio too short, skipping.");
+                                }
+                            },
+                            (err) => console.error("Error decoding TTS audio data:", err)
+                        );
+                    } catch (e) { console.error("Error processing base64 TTS audio:", e); }
+                }
+
+                if (data.error) {
+                    updateStatus(`Server error: ${data.error}`, true);
+                    appendToLog(transcriptionLog, `[ERR: ${data.error}]`, true);
+                    appendToLog(translationLog, `[ERR: ${data.error}]`, true);
+                }
+            } catch (e) { console.error("Error parsing server message:", e); }
+        };
+        ws.onerror = (error) => { console.error('WebSocket error:', error); updateStatus('WebSocket error.', true); };
+        ws.onclose = () => {
+            console.log('WebSocket disconnected');
+            if (!videoFileInput.value) updateStatus('WebSocket disconnected. Select video or refresh.', true);
+            stopMediaRecorder();
+            stopAndClearTts();
+        };
+    }
+
+    function initializeMediaRecorder(stream) {
+        if (!stream || stream.getAudioTracks().length === 0) {
+            updateStatus("Video has no audio track.", true); return false;
+        }
+        const audioOnlyStream = new MediaStream(stream.getAudioTracks());
+        const options = { mimeType: 'audio/webm;codecs=opus' };
+        try { mediaRecorder = new MediaRecorder(audioOnlyStream, options); }
+        catch (e) { updateStatus(`MediaRecorder Error: ${e.name}.`, true); return false; }
+
+        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) ws.send(e.data); };
+        mediaRecorder.onstart = () => { console.log('MediaRecorder started.'); updateStatus('Processing video audio...'); };
+        mediaRecorder.onstop = () => { console.log('MediaRecorder stopped.'); if (videoElement.paused || videoElement.ended) updateStatus('Video processing paused/finished.'); };
+        mediaRecorder.onerror = (e) => updateStatus(`MediaRecorder error: ${e.error.name}`, true);
+        return true;
+    }
+
+    function stopMediaRecorder() {
+        if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+        mediaRecorder = null;
+    }
+
+    videoFileInput.addEventListener('change', function(event) {
+        const file = event.target.files[0];
+        if (file) {
+            stopMediaRecorder();
+            stopAndClearTts(); // Clear TTS from previous video
+            transcriptionLog.innerHTML = '';
+            translationLog.innerHTML = '';
+            updateStatus('Loading video...');
+            const fileURL = URL.createObjectURL(file);
+            videoElement.src = fileURL;
+
+            videoElement.oncanplay = () => {
+                updateStatus(`Video "${file.name}" loaded. Press play.`);
+                initializeAudioContext(); // Crucial to do this before first TTS playback attempt
+                if (videoElement.captureStream) {
+                    audioStreamSource = videoElement.captureStream();
+                    initializeMediaRecorder(audioStreamSource);
+                } else { updateStatus("captureStream API not supported.", true); }
+            };
+            videoElement.onerror = () => updateStatus(`Error loading video.`, true);
+        }
+    });
+
+    videoElement.addEventListener('play', () => {
+        initializeAudioContext(); // Ensure AudioContext is active (user gesture)
+        if (ws && ws.readyState !== WebSocket.OPEN) {
+            setupWebSocket();
+            setTimeout(() => {
+                if (mediaRecorder && mediaRecorder.state === "inactive") mediaRecorder.start(100);
+                else if (!mediaRecorder && audioStreamSource) if(initializeMediaRecorder(audioStreamSource)) mediaRecorder.start(100);
+                if (ttsAudioQueue.length > 0) playNextTtsAudio(); // Try playing queued TTS
+            }, 500);
+        } else {
+            if (mediaRecorder && mediaRecorder.state === "inactive") mediaRecorder.start(100);
+            else if (!mediaRecorder && audioStreamSource) if(initializeMediaRecorder(audioStreamSource)) mediaRecorder.start(100);
+            if (ttsAudioQueue.length > 0) playNextTtsAudio(); // Try playing queued TTS
+        }
+    });
+
+    videoElement.addEventListener('pause', () => {
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+            mediaRecorder.requestData(); // Ensure last bits are sent
+            stopMediaRecorder();
+        }
+        // Don't clear TTS queue on pause, just stop playing new ones.
+        // User might resume and want TTS to continue from where it "would" be.
+        // Or, for simpler behavior, call stopAndClearTts();
+        if (currentTtsSourceNode) { // Stop current TTS sound
+             try { currentTtsSourceNode.stop(); } catch(e){}
+             currentTtsSourceNode = null;
+             isPlayingTts = false; // Allow next play if queue has items and video resumes
+        }
+        console.log("Video paused. TTS playback will stop after current segment.");
+    });
+
+    videoElement.addEventListener('ended', () => {
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+            mediaRecorder.requestData();
+            stopMediaRecorder();
+        }
+        stopAndClearTts(); // Clear TTS when video truly ends
+        updateStatus('Video finished. Processing complete.');
+    });
+
+    setupWebSocket();
+    window.addEventListener('beforeunload', () => {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+        stopMediaRecorder();
+        stopAndClearTts();
+        if (videoElement.src) URL.revokeObjectURL(videoElement.src);
+    });
+  </script>
+</body>
+</html>
